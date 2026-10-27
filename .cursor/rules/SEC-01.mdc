@@ -1,0 +1,9 @@
+---
+description: No Hardcoded Secrets
+globs: **/*.ts, **/*.js, **/*.json
+alwaysApply: false
+---
+
+# No Hardcoded Secrets
+
+Never hardcode API keys, access tokens, or sensitive credentials in source code. Always use environment variables.
