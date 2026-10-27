@@ -1,11 +1,17 @@
-# CLAUDE.md - agentcanon-mcp
-> Managed by AgentCanon MCP
+<!-- Managed by AgentCanon MCP (.agentcanon/rules.yaml) -->
+# CLAUDE.md — agentcanon-mcp
 
-### No Hardcoded Secrets
-Never hardcode API keys, access tokens, or sensitive credentials in source code. Always use environment variables.
+## Strict TypeScript & Zod Boundary Validation
+- **Rule ID:** `typescript-strict-architecture` (required)
+- **Scope:** `src/**/*.ts`
 
-### Deterministic Sync & Path Safety
-All adapter rule outputs must be deterministically sorted by priority descending and rule ID ascending. Target paths must be strictly validated against path traversal outside the project root.
+Use strict TypeScript with NodeNext module resolution.
+Validate all external MCP inputs and YAML files using Zod schemas in `src/domain/schema.ts`.
+Never use `any` or bypass path traversal checks.
 
-### TypeScript Strict ESM Standard
-Use NodeNext module resolution with explicit '.js' extensions in relative imports. Maintain strict type safety without 'any' where possible.
+## Non-Destructive Preview -> Approve -> Apply Sync
+- **Rule ID:** `safe-transactional-sync` (required)
+- **Scope:** `src/sync/**/*.ts`, `src/adapters/**/*.ts`
+
+All file mutations must go through `previewSync` and `applySync`.
+Verify SHA-256 content hashes and reject symlink escapes (`assertNoSymlinkEscape`) before writing any file.

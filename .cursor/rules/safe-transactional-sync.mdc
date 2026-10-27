@@ -1,0 +1,9 @@
+---
+description: "Non-Destructive Preview -> Approve -> Apply Sync [required]"
+globs: ["src/sync/**/*.ts","src/adapters/**/*.ts"]
+alwaysApply: false
+---
+<!-- Managed by AgentCanon MCP (rule: safe-transactional-sync) -->
+# Non-Destructive Preview -> Approve -> Apply Sync
+All file mutations must go through `previewSync` and `applySync`.
+Verify SHA-256 content hashes and reject symlink escapes (`assertNoSymlinkEscape`) before writing any file.

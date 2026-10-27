@@ -1,0 +1,12 @@
+---
+description: "Strict TypeScript & Zod Boundary Validation [required]"
+globs: ["src/**/*.ts"]
+alwaysApply: false
+---
+<!-- Managed by AgentCanon MCP (rule: typescript-strict-architecture) -->
+# Strict TypeScript & Zod Boundary Validation
+
+> Note: Exclude files matching: `tests/**/*.ts`
+Use strict TypeScript with NodeNext module resolution.
+Validate all external MCP inputs and YAML files using Zod schemas in `src/domain/schema.ts`.
+Never use `any` or bypass path traversal checks.

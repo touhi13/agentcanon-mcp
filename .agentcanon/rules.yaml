@@ -1,0 +1,54 @@
+schemaVersion: 1
+project:
+  name: agentcanon-mcp
+  description: Canonical AI coding rules managed by AgentCanon MCP
+targets:
+  - codex
+  - cursor
+  - claude
+  - copilot
+rules:
+  - id: typescript-strict-architecture
+    title: Strict TypeScript & Zod Boundary Validation
+    category: coding-style
+    scope:
+      include:
+        - src/**/*.ts
+      exclude:
+        - tests/**/*.ts
+    priority: 90
+    severity: required
+    content: >-
+      Use strict TypeScript with NodeNext module resolution.
+
+      Validate all external MCP inputs and YAML files using Zod schemas in
+      `src/domain/schema.ts`.
+
+      Never use `any` or bypass path traversal checks.
+    targets:
+      - codex
+      - cursor
+      - claude
+      - copilot
+    enabled: true
+  - id: safe-transactional-sync
+    title: Non-Destructive Preview -> Approve -> Apply Sync
+    category: security
+    scope:
+      include:
+        - src/sync/**/*.ts
+        - src/adapters/**/*.ts
+      exclude: []
+    priority: 85
+    severity: required
+    content: >-
+      All file mutations must go through `previewSync` and `applySync`.
+
+      Verify SHA-256 content hashes and reject symlink escapes
+      (`assertNoSymlinkEscape`) before writing any file.
+    targets:
+      - codex
+      - cursor
+      - claude
+      - copilot
+    enabled: true

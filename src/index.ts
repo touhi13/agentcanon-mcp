@@ -1,276 +1,230 @@
 #!/usr/bin/env node
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import fs from 'fs/promises';
-import path from 'path';
-import { MasterConfigSchema, MasterConfig, Rule } from './domain/schema.js';
-import { previewSync, applySync } from './sync/engine.js';
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import fs from "node:fs";
+import path from "node:path";
+import { AgentCanonEngine } from "./sync/engine.js";
+import { AgentTargetSchema, RuleSchema } from "./domain/schema.js";
 
-const CONFIG_FILENAME = 'agentcanon.config.json';
-
-export async function loadConfig(projectRoot: string): Promise<MasterConfig> {
-  const configPath = path.join(projectRoot, CONFIG_FILENAME);
-  const raw = await fs.readFile(configPath, 'utf8');
-  const json = JSON.parse(raw);
-  return MasterConfigSchema.parse(json);
+function resolveProjectRoot(rootArg?: string): string {
+  return path.resolve(rootArg || process.cwd());
 }
 
-export async function saveConfig(projectRoot: string, config: MasterConfig): Promise<void> {
-  const configPath = path.join(projectRoot, CONFIG_FILENAME);
-  await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
+const engineCache = new Map<string, AgentCanonEngine>();
+
+function getSharedEngine(root: string): AgentCanonEngine {
+  let engine = engineCache.get(root);
+  if (!engine) {
+    engine = new AgentCanonEngine(root);
+    engineCache.set(root, engine);
+  }
+  return engine;
 }
 
-// -------------------------------------------------------------
-// CLI Handler
-// -------------------------------------------------------------
-const args = process.argv.slice(2);
+export function createAgentCanonMcpServer(defaultRoot?: string): McpServer {
+  const server = new McpServer({
+    name: "agentcanon-mcp",
+    version: "0.1.0",
+  });
 
-if (args.includes('--init')) {
-  (async () => {
-    const root = process.cwd();
-    const configPath = path.join(root, CONFIG_FILENAME);
-    try {
-      await fs.access(configPath);
-      console.log(`[AgentCanon] ${CONFIG_FILENAME} already exists at ${configPath}`);
-      process.exit(0);
-    } catch {
-      const initialConfig: MasterConfig = {
-        version: '1.0.0',
-        projectName: path.basename(root) || 'my-project',
-        rules: [
+  server.tool(
+    "inspect_project",
+    "Detects repository structure, existing agent instruction files (AGENTS.md, CLAUDE.md, .cursor/rules), and AgentCanon status.",
+    {
+      projectRoot: z.string().optional().describe("Absolute path to project root"),
+    },
+    async ({ projectRoot }) => {
+      const root = resolveProjectRoot(projectRoot ?? defaultRoot);
+      const engine = getSharedEngine(root);
+      const detectedInstructionFiles = [
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".github/copilot-instructions.md",
+        ".cursor/rules",
+      ].filter((rel) => fs.existsSync(path.join(root, rel)));
+
+      return {
+        content: [
           {
-            id: 'SEC-01',
-            title: 'No Hardcoded Secrets',
-            category: 'security',
-            severity: 'error',
-            priority: 100,
-            scope: { directory: '', include: ['**/*'], exclude: [] },
-            targets: ['codex', 'cursor', 'claude', 'copilot'],
-            enabled: true,
-            content: 'Never hardcode API keys or credentials. Use environment variables.',
+            type: "text",
+            text: JSON.stringify(
+              {
+                projectRoot: root,
+                hasCanonicalRules: engine.hasCanonicalRules(),
+                canonicalRulesPath: ".agentcanon/rules.yaml",
+                detectedInstructionFiles,
+              },
+              null,
+              2
+            ),
           },
         ],
       };
-      await fs.writeFile(configPath, JSON.stringify(initialConfig, null, 2), 'utf8');
-      console.log(`[AgentCanon] Initialized ${CONFIG_FILENAME} successfully.`);
-      process.exit(0);
     }
-  })();
-} else if (args.includes('--check')) {
-  (async () => {
-    const root = process.cwd();
-    try {
-      const config = await loadConfig(root);
-      const preview = await previewSync(config, root);
-      const modified = preview.diffs.filter(d => d.action !== 'unchanged');
-      if (modified.length > 0) {
-        console.error(`[AgentCanon CI] Drift detected! Following files are out of sync:`);
-        modified.forEach(m => console.error(` - ${m.filePath} (${m.action})`));
-        console.error(`\nRun 'npx agentcanon-mcp --apply' or use the MCP server to synchronize.`);
-        process.exit(1);
-      }
-      console.log(`[AgentCanon CI] All instruction files are fully synchronized.`);
-      process.exit(0);
-    } catch (err: any) {
-      console.error(`[AgentCanon CI Error]:`, err.message);
-      process.exit(2);
-    }
-  })();
-} else if (args.includes('--apply')) {
-  (async () => {
-    const root = process.cwd();
-    try {
-      const config = await loadConfig(root);
-      const updated = await applySync(config, root);
-      console.log(`[AgentCanon] Successfully synchronized ${updated.length} files:`);
-      updated.forEach(f => console.log(` - ${f}`));
-      process.exit(0);
-    } catch (err: any) {
-      console.error(`[AgentCanon Error]:`, err.message);
-      process.exit(1);
-    }
-  })();
-} else {
-  // -----------------------------------------------------------
-  // MCP Server Handler (stdio)
-  // -----------------------------------------------------------
-  const server = new Server(
-    { name: 'agentcanon-mcp', version: '1.0.0' },
-    { capabilities: { tools: {} } }
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: 'preview_rules_sync',
-        description: 'Preview changes required to synchronize rules across AGENTS.md (Codex), .cursor/rules (*.mdc), CLAUDE.md, and Copilot.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            projectRoot: {
-              type: 'string',
-              description: 'Root directory of the project (defaults to current working directory)',
-            },
-          },
-        },
-      },
-      {
-        name: 'apply_rules_sync',
-        description: 'Approve and write synchronized rule projections to disk with transaction safety and drift resolution.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            projectRoot: {
-              type: 'string',
-              description: 'Root directory of the project (defaults to current working directory)',
-            },
-          },
-        },
-      },
-      {
-        name: 'validate_token_budget',
-        description: 'Check total token size of active instruction rules against AI context limits.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            projectRoot: {
-              type: 'string',
-              description: 'Root directory of the project (defaults to current working directory)',
-            },
-          },
-        },
-      },
-      {
-        name: 'import_existing_rules',
-        description: 'Scan and import legacy rules (.cursorrules, CLAUDE.md, AGENTS.md, copilot-instructions.md) into ruleforge.config.json.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            projectRoot: {
-              type: 'string',
-              description: 'Root directory of the project (defaults to current working directory)',
-            },
-          },
-        },
-      },
-    ],
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: toolArgs } = request.params;
-    const root = (toolArgs?.projectRoot as string) || process.cwd();
-
-    try {
-      if (name === 'import_existing_rules') {
-        const importedRules: Rule[] = [];
-        const candidates = [
-          { file: 'CLAUDE.md', target: 'claude' as const, id: 'IMPORTED-CLAUDE' },
-          { file: 'AGENTS.md', target: 'codex' as const, id: 'IMPORTED-CODEX' },
-          { file: '.cursorrules', target: 'cursor' as const, id: 'IMPORTED-CURSOR' },
-          { file: path.join('.github', 'copilot-instructions.md'), target: 'copilot' as const, id: 'IMPORTED-COPILOT' },
-        ];
-
-        for (const c of candidates) {
-          const fullP = path.join(root, c.file);
-          try {
-            const content = await fs.readFile(fullP, 'utf8');
-            if (content.trim()) {
-              importedRules.push({
-                id: c.id,
-                title: `Imported from ${c.file}`,
-                category: 'workflow',
-                severity: 'info',
-                priority: 50,
-                scope: { directory: '', include: ['**/*'], exclude: [] },
-                targets: [c.target],
-                enabled: true,
-                content: content.trim(),
-              });
-            }
-          } catch {}
-        }
-
-        let config: MasterConfig;
-        try {
-          config = await loadConfig(root);
-          config.rules.push(...importedRules);
-        } catch {
-          config = {
-            version: '1.0.0',
-            projectName: path.basename(root) || 'imported-project',
-            rules: importedRules,
-          };
-        }
-
-        await saveConfig(root, config);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Successfully scanned and imported ${importedRules.length} rule(s) into ruleforge.config.json`,
-            },
-          ],
-        };
-      }
-
-      const config = await loadConfig(root);
-
-      if (name === 'preview_rules_sync') {
-        const preview = await previewSync(config, root);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(
-                preview.diffs.map(d => ({
-                  file: path.relative(root, d.filePath),
-                  action: d.action,
-                })),
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-
-      if (name === 'apply_rules_sync') {
-        const updated = await applySync(config, root);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Successfully synchronized ${updated.length} file(s):\n${updated.map(f => path.relative(root, f)).join('\n')}`,
-            },
-          ],
-        };
-      }
-
-      if (name === 'validate_token_budget') {
-        const preview = await previewSync(config, root);
-        let totalChars = 0;
-        preview.projections.forEach(p => (totalChars += p.content.length));
-        const estimatedTokens = Math.ceil(totalChars / 4);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Total instruction projections: ${preview.projections.length} files. Estimated total tokens: ~${estimatedTokens} tokens. Status: ${estimatedTokens < 15000 ? 'SAFE (< 15,000 budget)' : 'WARNING (exceeds budget)'}`,
-            },
-          ],
-        };
-      }
-
-      throw new Error(`Unknown tool: ${name}`);
-    } catch (err: any) {
+  server.tool(
+    "import_existing_rules",
+    "Bootstraps .agentcanon/rules.yaml from existing AGENTS.md, CLAUDE.md, or creates a starter configuration.",
+    {
+      projectRoot: z.string().optional(),
+    },
+    async ({ projectRoot }) => {
+      const root = resolveProjectRoot(projectRoot ?? defaultRoot);
+      const engine = getSharedEngine(root);
+      const res = engine.importExistingRules();
       return {
-        content: [{ type: 'text', text: `Error: ${err.message}` }],
-        isError: true,
+        content: [{ type: "text", text: JSON.stringify(res, null, 2) }],
       };
     }
-  });
+  );
 
-  const transport = new StdioServerTransport();
-  server.connect(transport).catch(console.error);
+  server.tool(
+    "list_rules",
+    "Lists all canonical rules and metadata from .agentcanon/rules.yaml.",
+    {
+      projectRoot: z.string().optional(),
+    },
+    async ({ projectRoot }) => {
+      const root = resolveProjectRoot(projectRoot ?? defaultRoot);
+      const engine = getSharedEngine(root);
+      const { config } = engine.loadConfig();
+      return {
+        content: [{ type: "text", text: JSON.stringify(config, null, 2) }],
+      };
+    }
+  );
+
+  server.tool(
+    "upsert_rule",
+    "Creates or updates a canonical rule inside .agentcanon/rules.yaml with Zod schema validation.",
+    {
+      projectRoot: z.string().optional(),
+      rule: RuleSchema,
+    },
+    async ({ projectRoot, rule }) => {
+      const root = resolveProjectRoot(projectRoot ?? defaultRoot);
+      const engine = getSharedEngine(root);
+      const { config } = engine.loadConfig();
+      const idx = config.rules.findIndex((r) => r.id === rule.id);
+      const action = idx >= 0 ? "updated" : "created";
+      if (idx >= 0) {
+        config.rules[idx] = rule;
+      } else {
+        config.rules.push(rule);
+      }
+      engine.saveConfig(config);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ status: action, ruleId: rule.id }, null, 2),
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "validate_rules",
+    "Validates canonical rules for schema errors, duplicate IDs, formatting conflicts, adapter warnings, and token budget.",
+    {
+      projectRoot: z.string().optional(),
+    },
+    async ({ projectRoot }) => {
+      const root = resolveProjectRoot(projectRoot ?? defaultRoot);
+      const engine = getSharedEngine(root);
+      const report = engine.validateRules();
+      return {
+        content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
+      };
+    }
+  );
+
+  server.tool(
+    "preview_sync",
+    "Computes deterministic agent projections, checks for manual drift/conflicts, and returns an approval-bound planId with file diffs.",
+    {
+      projectRoot: z.string().optional(),
+      targets: z.array(AgentTargetSchema).optional(),
+      allowOverwriteConflicts: z.boolean().optional(),
+    },
+    async ({ projectRoot, targets, allowOverwriteConflicts }) => {
+      const root = resolveProjectRoot(projectRoot ?? defaultRoot);
+      const engine = getSharedEngine(root);
+      const plan = engine.previewSync({ targets, allowOverwriteConflicts });
+      return {
+        content: [{ type: "text", text: JSON.stringify(plan, null, 2) }],
+      };
+    }
+  );
+
+  server.tool(
+    "apply_sync",
+    "Applies a previously previewed sync plan after explicit user approval, verifying no files changed since preview.",
+    {
+      projectRoot: z.string().optional(),
+      planId: z.string(),
+      approved: z.boolean(),
+    },
+    async ({ projectRoot, planId, approved }) => {
+      const root = resolveProjectRoot(projectRoot ?? defaultRoot);
+      const engine = getSharedEngine(root);
+      const result = engine.applySync({ planId, approved });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  return server;
 }
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  if (args.includes("--init")) {
+    const engine = new AgentCanonEngine(process.cwd());
+    const res = engine.importExistingRules();
+    console.log(`Initialized .agentcanon/rules.yaml (${res.importedRules} rule(s)).`);
+    process.exit(0);
+  }
+
+  if (args.includes("--sync-yes")) {
+    const engine = new AgentCanonEngine(process.cwd());
+    const plan = engine.previewSync({ allowOverwriteConflicts: true });
+    const res = engine.applySync({ planId: plan.planId, approved: true });
+    console.log(`Synced ${res.writtenFiles.length} file(s):`, res.writtenFiles);
+    process.exit(0);
+  }
+
+  if (args.includes("--check")) {
+    const engine = new AgentCanonEngine(process.cwd());
+    const validation = engine.validateRules();
+    if (!validation.valid) {
+      console.error("AgentCanon validation failed:", validation.errors);
+      process.exit(1);
+    }
+    const plan = engine.previewSync();
+    const drifted = plan.changes.filter((c) => c.action !== "unchanged");
+    if (drifted.length > 0) {
+      console.error(
+        `AgentCanon drift detected in ${drifted.length} file(s):`,
+        drifted.map((d) => `${d.path} (${d.action})`)
+      );
+      process.exit(1);
+    }
+    console.log("AgentCanon check passed: all agent instruction files are in sync.");
+    process.exit(0);
+  }
+
+  const server = createAgentCanonMcpServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((err) => {
+  console.error("AgentCanon MCP fatal error:", err);
+  process.exit(1);
+});

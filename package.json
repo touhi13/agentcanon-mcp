@@ -1,18 +1,35 @@
 {
   "name": "agentcanon-mcp",
-  "version": "1.0.0",
-  "description": "Single Source of Truth MCP Server for AI Coding Instructions across OpenAI Codex, Cursor, Claude Code, and Copilot",
-  "main": "dist/index.js",
+  "version": "0.1.0",
+  "description": "Single source of truth MCP server and CLI for AI coding instructions across OpenAI Codex (AGENTS.md), Cursor (.mdc), Claude Code (CLAUDE.md), and GitHub Copilot with approval-bound synchronization.",
+  "author": "touhi13",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/touhi13/agentcanon-mcp.git"
+  },
+  "homepage": "https://github.com/touhi13/agentcanon-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/touhi13/agentcanon-mcp/issues"
+  },
   "bin": {
-    "agentcanon": "./dist/index.js",
     "agentcanon-mcp": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "SPEC.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dogfood": "node dist/index.js --init && node dist/index.js --sync-yes",
+    "check:drift": "node dist/index.js --check"
   },
   "keywords": [
     "mcp",
@@ -22,29 +39,21 @@
     "cursor-rules",
     "claude-code",
     "copilot-instructions",
-    "ai-coding-agents"
+    "ai-coding-agents",
+    "agentcanon"
   ],
-  "author": "Open Source Community",
-  "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.5.0",
-    "yaml": "^2.4.1",
-    "zod": "^3.22.4"
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   },
   "engines": {
     "node": ">=20.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/touhi13/agentcanon-mcp.git"
-  },
-  "bugs": {
-    "url": "https://github.com/touhi13/agentcanon-mcp/issues"
-  },
-  "homepage": "https://github.com/touhi13/agentcanon-mcp#readme"
+  }
 }

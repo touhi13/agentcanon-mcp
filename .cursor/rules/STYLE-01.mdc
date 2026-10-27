@@ -1,9 +1,0 @@
----
-description: TypeScript Strict ESM Standard
-globs: src/**/*.ts
-alwaysApply: false
----
-
-# TypeScript Strict ESM Standard
-
-Use NodeNext module resolution with explicit '.js' extensions in relative imports. Maintain strict type safety without 'any' where possible.

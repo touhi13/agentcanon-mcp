@@ -1,9 +1,0 @@
----
-description: Deterministic Sync & Path Safety
-globs: src/**/*
-alwaysApply: false
----
-
-# Deterministic Sync & Path Safety
-
-All adapter rule outputs must be deterministically sorted by priority descending and rule ID ascending. Target paths must be strictly validated against path traversal outside the project root.

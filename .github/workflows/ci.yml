@@ -1,33 +1,26 @@
-name: AgentCanon CI Drift Check
+name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   pull_request:
-    branches: [ main, master ]
+    branches: [main]
 
 jobs:
-  check-drift:
-    name: Verify Instruction Drift & Run Unit Tests
+  verify:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install Dependencies
-        run: npm ci
-
-      - name: Build TypeScript
-        run: npm run build
-
-      - name: Run Test Suite
-        run: npm test
-
-      - name: Verify Rule Synchronization Drift
-        run: node dist/index.js --check
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Verify self-dogfooded AGENTS.md / CLAUDE.md / .cursor rules have zero drift
+        run: npm run check:drift

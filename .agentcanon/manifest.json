@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "configSha256": "b8fc7a17ec35b635237368082a192d6366ed3982da5969dfe9870d95f3c3b336",
+  "files": {
+    ".cursor/rules/safe-transactional-sync.mdc": {
+      "path": ".cursor/rules/safe-transactional-sync.mdc",
+      "adapter": "cursor",
+      "sha256": "2a4c454e5a4ea8eff1760579527b47dd32efd347da392fd64b3ca258ce9e3196",
+      "sourceRuleIds": [
+        "safe-transactional-sync"
+      ],
+      "updatedAt": "2026-10-27T08:53:06.471Z"
+    },
+    ".cursor/rules/typescript-strict-architecture.mdc": {
+      "path": ".cursor/rules/typescript-strict-architecture.mdc",
+      "adapter": "cursor",
+      "sha256": "2c9821561d369b3eea57ec30acedc8ea70feeaf8e8f80ac914a7b33b942d241b",
+      "sourceRuleIds": [
+        "typescript-strict-architecture"
+      ],
+      "updatedAt": "2026-10-27T08:53:06.472Z"
+    },
+    ".github/copilot-instructions.md": {
+      "path": ".github/copilot-instructions.md",
+      "adapter": "copilot",
+      "sha256": "d1d1d822ade4cfb4cd68b1280f49d97ef9b7b35ae000ef8cc12e520d8b088519",
+      "sourceRuleIds": [
+        "typescript-strict-architecture",
+        "safe-transactional-sync"
+      ],
+      "updatedAt": "2026-10-27T08:53:06.473Z"
+    },
+    "AGENTS.md": {
+      "path": "AGENTS.md",
+      "adapter": "codex",
+      "sha256": "e67f5333c22f5764eb50f66e5f45eeaef828dc8de8e946e653eacd15a316c3a4",
+      "sourceRuleIds": [
+        "typescript-strict-architecture",
+        "safe-transactional-sync"
+      ],
+      "updatedAt": "2026-10-27T08:53:06.473Z"
+    },
+    "CLAUDE.md": {
+      "path": "CLAUDE.md",
+      "adapter": "claude",
+      "sha256": "1cea1cecb85d325fce29b95aa382ec4d04a85b8c8902c224dc2676d6c71e69ca",
+      "sourceRuleIds": [
+        "typescript-strict-architecture",
+        "safe-transactional-sync"
+      ],
+      "updatedAt": "2026-10-27T08:53:06.474Z"
+    }
+  }
+}

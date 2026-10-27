@@ -1,93 +1,111 @@
-import { describe, it, expect } from 'vitest';
-import { MasterConfigSchema } from '../src/domain/schema.js';
-import { codexAdapter, cursorAdapter, claudeAdapter, copilotAdapter } from '../src/adapters/index.js';
-import { previewSync, computeSha256 } from '../src/sync/engine.js';
-import path from 'path';
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { AgentCanonEngine } from "../src/sync/engine.js";
+import { assertSafeRelativePath } from "../src/domain/schema.js";
 
-describe('AgentCanon Core, Schema & Adapters', () => {
-  const sampleConfig = {
-    version: '1.0.0',
-    projectName: 'TestProject',
-    rules: [
-      {
-        id: 'SEC-01',
-        title: 'No Hardcoded Secrets',
-        category: 'security' as const,
-        severity: 'error' as const,
-        priority: 100,
-        scope: { directory: '', include: ['**/*.ts'], exclude: ['**/*.test.ts'] },
-        targets: ['codex' as const, 'cursor' as const, 'claude' as const, 'copilot' as const],
-        enabled: true,
-        content: 'Never hardcode API keys or credentials.'
+describe("AgentCanon MCP Core & Security Suite", () => {
+  let tmpDir: string;
+  let engine: AgentCanonEngine;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentcanon-test-"));
+    engine = new AgentCanonEngine(tmpDir);
+    engine.importExistingRules();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("generates deterministic output for Codex (AGENTS.md) and Cursor (.mdc)", () => {
+    const first = engine.generateProjections(["codex", "cursor"]);
+    const second = engine.generateProjections(["codex", "cursor"]);
+    expect(first).toEqual(second);
+    expect(first.some((p) => p.path === "AGENTS.md")).toBe(true);
+    expect(
+      first.some((p) => p.path === ".cursor/rules/typescript-strict-architecture.mdc")
+    ).toBe(true);
+  });
+
+  it("supports hierarchical nested AGENTS.md projections for OpenAI Codex", () => {
+    const { config } = engine.loadConfig();
+    config.rules.push({
+      id: "api-package-rules",
+      title: "API Layer Rules",
+      category: "architecture",
+      scope: {
+        include: ["packages/api/**/*.ts"],
+        exclude: [],
+        directory: "packages/api",
       },
-      {
-        id: 'API-01',
-        title: 'REST Conventions',
-        category: 'architecture' as const,
-        severity: 'warning' as const,
-        priority: 90,
-        scope: { directory: 'packages/api', include: ['**/*.ts'], exclude: [] },
-        targets: ['codex' as const],
-        enabled: true,
-        content: 'Always return standard JSON response envelope.'
-      }
-    ]
-  };
+      priority: 75,
+      severity: "required",
+      content: "Keep all route handlers stateless and validate payloads with Zod.",
+      targets: ["codex"],
+      enabled: true,
+    });
+    engine.saveConfig(config);
 
-  it('validates master config schema with Zod', () => {
-    const parsed = MasterConfigSchema.parse(sampleConfig);
-    expect(parsed.projectName).toBe('TestProject');
-    expect(parsed.rules.length).toBe(2);
+    const projections = engine.generateProjections(["codex"]);
+    expect(projections.map((p) => p.path)).toEqual([
+      "AGENTS.md",
+      "packages/api/AGENTS.md",
+    ]);
   });
 
-  it('generates hierarchical Codex AGENTS.md projections', () => {
-    const config = MasterConfigSchema.parse(sampleConfig);
-    const projections = codexAdapter.generate(config, process.cwd());
-    expect(projections.length).toBe(2);
+  it("enforces Preview -> Approval -> Apply and blocks replay of the same planId", () => {
+    const plan = engine.previewSync({ targets: ["codex"] });
+    expect(plan.requiresApproval).toBe(true);
+    expect(() => engine.applySync({ planId: plan.planId, approved: false })).toThrow(
+      /explicit user approval/
+    );
 
-    // Root AGENTS.md
-    const rootProj = projections.find(p => !p.filePath.includes('packages'));
-    expect(rootProj).toBeDefined();
-    expect(rootProj!.content).toContain('# Codex Instructions for TestProject');
-    expect(rootProj!.content).toContain('No Hardcoded Secrets');
-    expect(rootProj!.content).toContain('**Applies to:** `**/*.ts`');
-    expect(rootProj!.content).toContain('**Excludes:** `**/*.test.ts`');
+    const plan2 = engine.previewSync({ targets: ["codex"] });
+    const res = engine.applySync({ planId: plan2.planId, approved: true });
+    expect(res.writtenFiles).toContain("AGENTS.md");
+    expect(fs.existsSync(path.join(tmpDir, "AGENTS.md"))).toBe(true);
 
-    // Nested packages/api/AGENTS.md
-    const nestedProj = projections.find(p => p.filePath.includes(path.join('packages', 'api')));
-    expect(nestedProj).toBeDefined();
-    expect(nestedProj!.content).toContain('REST Conventions');
+    expect(() => engine.applySync({ planId: plan2.planId, approved: true })).toThrow(
+      /Invalid or already-consumed planId/
+    );
   });
 
-  it('generates Cursor .mdc rule projection', () => {
-    const config = MasterConfigSchema.parse(sampleConfig);
-    const projections = cursorAdapter.generate(config, process.cwd());
-    expect(projections.length).toBe(1);
-    expect(projections[0].filePath).toContain(path.join('.cursor', 'rules', 'SEC-01.mdc'));
-    expect(projections[0].content).toContain('description: No Hardcoded Secrets');
-    expect(projections[0].content).toContain('globs: **/*.ts');
+  it("detects human edits to managed AGENTS.md and refuses silent overwrite", () => {
+    const initialPlan = engine.previewSync({ targets: ["codex"] });
+    engine.applySync({ planId: initialPlan.planId, approved: true });
+
+    const agentsPath = path.join(tmpDir, "AGENTS.md");
+    fs.appendFileSync(agentsPath, "\n# Manual Developer Note\n", "utf8");
+
+    const { config } = engine.loadConfig();
+    config.rules[0].content += "\nAlways write unit tests.";
+    engine.saveConfig(config);
+
+    const conflictPlan = engine.previewSync({ targets: ["codex"] });
+    expect(conflictPlan.hasConflicts).toBe(true);
+    expect(conflictPlan.changes[0].action).toBe("conflict_modified_by_user");
+
+    expect(() =>
+      engine.applySync({ planId: conflictPlan.planId, approved: true })
+    ).toThrow(/unresolved file conflicts/);
   });
 
-  it('generates Claude CLAUDE.md projection', () => {
-    const config = MasterConfigSchema.parse(sampleConfig);
-    const projections = claudeAdapter.generate(config, process.cwd());
-    expect(projections.length).toBe(1);
-    expect(projections[0].filePath).toContain('CLAUDE.md');
-    expect(projections[0].content).toContain('# CLAUDE.md - TestProject');
-    expect(projections[0].content).toContain('No Hardcoded Secrets');
+  it("rejects stale plan if target file changes between preview and apply", () => {
+    const plan = engine.previewSync({ targets: ["codex"] });
+    fs.writeFileSync(path.join(tmpDir, "AGENTS.md"), "rogue modification", "utf8");
+    expect(() => engine.applySync({ planId: plan.planId, approved: true })).toThrow(
+      /Stale sync plan rejected/
+    );
   });
 
-  it('generates Copilot copilot-instructions.md projection', () => {
-    const config = MasterConfigSchema.parse(sampleConfig);
-    const projections = copilotAdapter.generate(config, process.cwd());
-    expect(projections.length).toBe(1);
-    expect(projections[0].filePath).toContain(path.join('.github', 'copilot-instructions.md'));
-    expect(projections[0].content).toContain('# GitHub Copilot Instructions for TestProject');
-  });
-
-  it('computes deterministic normalized SHA-256 hash', () => {
-    const hash1 = computeSha256('Hello World\r\n');
-    const hash2 = computeSha256('Hello World\n');
-    expect(hash1).toBe(hash2);
+  it("blocks path traversal outside project root", () => {
+    expect(() => assertSafeRelativePath(tmpDir, "../../etc/passwd")).toThrow(
+      /Path traversal detected/
+    );
+    expect(() => assertSafeRelativePath(tmpDir, "/etc/passwd")).toThrow(
+      /Unsafe or absolute path/
+    );
   });
 });
